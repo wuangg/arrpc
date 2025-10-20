@@ -133,7 +133,11 @@ export default class WSServer {
 	}
 
 	onMessage(socket: RPCWebSocket, msg: unknown): void {
-		if (process.env.ARRPC_DEBUG) log("message", msg);
-		this.handlers.message(socket, msg);
+		try {
+			if (process.env.ARRPC_DEBUG) log("message", msg);
+			this.handlers.message(socket, msg);
+		} catch {
+			log("Invalid Payload!");
+		}
 	}
 }

@@ -258,6 +258,11 @@ export default class IPCServer {
 
 	onMessage(socket: IPCSocket, msg: unknown): void {
 		if (process.env.ARRPC_DEBUG) log("message", msg);
-		this.handlers.message(socket, msg);
+		if (!msg.args || !msg.cmd)  {
+			log("Invaild payload!");
+			return;
+		} else {
+			this.handlers.message(socket, msg);
+		}
 	}
 }
