@@ -58,6 +58,9 @@ export function transformObject(all: RawGameData[]): DetectableGame[] {
 				let name = exec.name;
 				let isStrict: 1 | undefined;
 
+				if (name.endsWith("project8.exe")) {
+					name = name.replace("project8.exe", "deadlock.exe");
+				}
 				if (name.startsWith(">")) {
 					isStrict = 1;
 					name = name.slice(1);
