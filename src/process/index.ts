@@ -44,6 +44,7 @@ export default class ProcessServer {
 	timestamps: Record<string, number> = {};
 	names: Record<string, string> = {};
 	pids: Record<string, number> = {};
+	cache: Map<string, DetectedGame> = new Map();
 	detectablePath: string;
 
 	detectionMap: Map<string, DetectableGame[]> = new Map();
@@ -132,55 +133,67 @@ export default class ProcessServer {
 
 		try {
 			const processes = await getProcesses();
+			const cacheKeys: Record<string, boolean> = {};
 
 			for (const [pid, _path, args, _cwdPath] of processes) {
 				const rawPath = _path.toLowerCase().replaceAll("\\", "/");
 				const cwdPath = (_cwdPath || "").toLowerCase().replaceAll("\\", "/");
+				const cacheKey = `${rawPath}\0${args}` + " " + `${cwdPath}`;
+				const cached = this.cache.get(cacheKey);
+				cacheKeys[cacheKey] = true;
 
-				if (!this.isValidProcess(pid, rawPath)) continue;
+				if (cached !== undefined) {
+					cached.pid = pid;
+					cached.timestamp = this.timestamps[cached.id] || Date.now();
+					detectedGames.set(cached.id, cached);
+				} else {
+					if (!this.isValidProcess(pid, rawPath)) continue;
 
-				// 1. Get the filename (e.g. "c:/games/game.exe" -> "game.exe")
-				const filename = rawPath.split("/").pop();
-				if (!filename) continue;
+					// 1. Get the filename (e.g. "c:/games/game.exe" -> "game.exe")
+					const filename = rawPath.split("/").pop();
+					if (!filename) continue;
 
-				// 2. Generate candidates for lookup
-				const candidates = new Set<string>();
+					// 2. Generate candidates for lookup
+					const candidates = new Set<string>();
 
-				// a. Exact filename: "game.exe"
-				candidates.add(filename);
+					// a. Exact filename: "game.exe"
+					candidates.add(filename);
 
-				// b. No extension: "game"
-				const noExt = filename.replace(".exe", "");
-				candidates.add(noExt);
+					// b. No extension: "game"
+					const noExt = filename.replace(".exe", "");
+					candidates.add(noExt);
 
-				// c. Strip bitness: "game_64.exe" -> "game.exe"
-				const noBitness = this.stripBitness(filename);
-				candidates.add(noBitness);
-				candidates.add(this.stripBitness(noExt)); // "game_64" -> "game"
+					// c. Strip bitness: "game_64.exe" -> "game.exe"
+					const noBitness = this.stripBitness(filename);
+					candidates.add(noBitness);
+					candidates.add(this.stripBitness(noExt)); // "game_64" -> "game"
 
-				// 3. Check candidates against the map
-				for (const candidate of candidates) {
-					const matches = this.detectionMap.get(candidate);
-					if (!matches) continue;
+					// 3. Check candidates against the map
+					for (const candidate of candidates) {
+						const matches = this.detectionMap.get(candidate);
+						if (!matches) continue;
 
-					for (const game of matches) {
-						if (
-							this.checkGameMatch(
-								game,
-								candidate,
-								filename,
-								rawPath,
-								cwdPath,
-								args,
-							)
-						) {
-							// Found a match
-							detectedGames.set(game.i, {
-								id: game.i,
-								name: game.n,
-								pid,
-								timestamp: this.timestamps[game.i] || Date.now(),
-							});
+						for (const game of matches) {
+							if (
+								this.checkGameMatch(
+									game,
+									candidate,
+									filename,
+									rawPath,
+									cwdPath,
+									args,
+								)
+							) {
+								// Found a match
+								const match: DetectedGame = {
+									id: game.i,
+									name: game.n,
+									pid,
+									timestamp: this.timestamps[game.i] || Date.now(),
+								};
+								detectedGames.set(game.i, match);
+								this.cache.set(cacheKey, match);
+							}
 						}
 					}
 				}
@@ -188,6 +201,22 @@ export default class ProcessServer {
 
 			this.handleScanResults(Array.from(detectedGames.values()));
 
+			const fetchedCacheKeys = Object.keys(cacheKeys);
+			const globalCacheKeys = Array.from(this.cache.keys());
+
+			if (globalCacheKeys.length > fetchedCacheKeys.length * 2) {
+				const exLen = this.cache.size;
+
+				for (const key in fetchedCacheKeys) {
+					delete fetchedCacheKeys[key];
+				}
+				for (const key in globalCacheKeys) {
+					this.cache.delete(key);
+				}
+				if (DEBUG) {
+					log(`cache gc complete: ${exLen} -> ${this.cache.size}`);
+				}
+			}
 			if (DEBUG) {
 				const timeTaken = (performance.now() - startTime).toFixed(2);
 				log(`scanned ${processes.length} processes in ${timeTaken}ms`);
